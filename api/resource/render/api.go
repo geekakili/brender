@@ -7,8 +7,9 @@ import (
 )
 
 type API struct {
-	logger    *logger.Logger
-	validator *validator.Validate
+	logger     *logger.Logger
+	validator  *validator.Validate
+	errChannel chan int
 }
 
 func New(logger *logger.Logger, validator *validator.Validate) *API {
