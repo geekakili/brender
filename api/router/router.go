@@ -17,7 +17,7 @@ func New(l *logger.Logger, v *validator.Validate) *chi.Mux {
 		r.Use(middleware.ContentTypeJson)
 
 		renderer := render.New(l, v)
-		r.Method("GET", "/render", requestlog.NewHandler(renderer.Render, l))
+		r.Method("POST", "/render", requestlog.NewHandler(renderer.Render, l))
 	})
 
 	return r
