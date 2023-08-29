@@ -3,6 +3,7 @@ package render
 import (
 	e "brender/api/resource/common/err"
 	"encoding/json"
+	"strconv"
 
 	"fmt"
 	"io"
@@ -77,7 +78,7 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 	a.errChannel = make(chan int)
 	go func() {
-		a.runBlender(filePath)
+		a.runBlender(filePath, form)
 	}()
 
 	sig := <-a.errChannel
@@ -90,8 +91,26 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) runBlender(filePath string) {
-	cmd := exec.Command("/Applications/blender.app/Contents/MacOS/blender", "-b", filePath, "-x", "1", "-o", "./test.png", "-a")
+func (a *API) runBlender(filePath string, blenderMetadata *Form) {
+	blenderCliArgs := []string{"-b", filePath, "-x", "1", "-o", "./test.png"}
+	if blenderMetadata.StartFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-s", strconv.Itoa(blenderMetadata.StartFrame))
+	}
+
+	if blenderMetadata.EndFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-e", strconv.Itoa(blenderMetadata.EndFrame))
+	}
+
+	if blenderMetadata.FrameJump > 0 {
+		blenderCliArgs = append(blenderCliArgs, "-j", strconv.Itoa(blenderMetadata.FrameJump))
+	}
+
+	if blenderMetadata.RenderAnimation {
+		blenderCliArgs = append(blenderCliArgs, "-a")
+	} else {
+		blenderCliArgs = append(blenderCliArgs, "-f", blenderMetadata.RenderFrames)
+	}
+	cmd := exec.Command("/Applications/blender.app/Contents/MacOS/blender", blenderCliArgs...)
 
 	outfile, err := os.Create("./log.txt")
 	if err != nil {
