@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+
+	"github.com/google/uuid"
 )
 
 // Create godoc
@@ -49,7 +51,7 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the file from the request
-	file, handler, err := r.FormFile("project_file")
+	file, _, err := r.FormFile("project_file")
 	if err != nil {
 		a.logger.Error().Err(err).Msg("Failed to process file")
 		e.BadRequest(w, "Error processing file")
@@ -58,7 +60,8 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Create a new file in the uploads directory
-	filePath := "./uploads/" + handler.Filename
+	fileName := uuid.New()
+	filePath := fmt.Sprintf("./uploads/%s.blend", fileName)
 	f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		e.ServerError(w, e.FormErrResponseFailure)
