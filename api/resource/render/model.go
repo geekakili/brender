@@ -19,16 +19,3 @@ type RenderObject struct {
 	OutputFormat    string
 	RenderAnimation bool
 }
-
-func (renderForm *Form) ToModel() *RenderObject {
-
-	return &RenderObject{
-		StartFrame:      renderForm.StartFrame,
-		EndFrame:        renderForm.EndFrame,
-		FrameJump:       renderForm.FrameJump,
-		RenderFrames:    renderForm.RenderFrames,
-		RenderEngine:    renderForm.RenderEngine,
-		OutputFormat:    renderForm.OutputFormat,
-		RenderAnimation: renderForm.RenderAnimation,
-	}
-}
