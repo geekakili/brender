@@ -12,14 +12,22 @@ import (
 	"brender/config"
 	"brender/util/logger"
 	"brender/util/validator"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 func main() {
 	c := config.New()
 	l := logger.New(c.Server.Debug)
 	v := validator.New()
+	db, err := badger.Open(badger.DefaultOptions("/tmp/badger"))
+	if err != nil {
+		l.Fatal().Err(err).Msg("Failed to initialize database")
+	}
 
-	r := router.New(l, v)
+	defer db.Close()
+
+	r := router.New(l, v, db)
 
 	s := &http.Server{
 		Addr:         fmt.Sprintf(":%d", c.Server.Port),
