@@ -5,6 +5,7 @@ import (
 	"brender/api/resource/common/utilities"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"fmt"
 	"io"
@@ -41,7 +42,7 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Form {
 		formData[k] = v[0]
 	}
-	form := &Form{}
+	renderObject := &RenderObject{}
 	formDataJson, err := json.Marshal(formData)
 	if err != nil {
 		a.logger.Error().Err(err).Msg("")
@@ -49,7 +50,7 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.Unmarshal([]byte(formDataJson), form); err != nil {
+	if err := json.Unmarshal([]byte(formDataJson), renderObject); err != nil {
 		a.logger.Error().Err(err).Msg("")
 		e.BadRequest(w, e.JsonDecodingFailure)
 		return
@@ -92,15 +93,27 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 	a.errChannel = make(chan int)
 	go func() {
-		err = a.db.Update(func(txn *badger.Txn) error {
-			err := txn.Set([]byte(renderUUId), formDataJson)
-			return err
-		})
+		renderMetadata := new(RenderMetadata)
+		renderMetadata.RenderObject = *renderObject
+		renderMetadata.RenderDirectory = renderDir
+		renderMetadata.StartTime = time.Now().UnixNano()
+		renderMetadataBytes, err := json.Marshal(renderMetadata)
 		if err != nil {
+			a.logger.Error().Err(err).Msg("")
 			a.errChannel <- 1
 			return
 		}
-		a.runBlender(renderDir, form)
+
+		err = a.db.Update(func(txn *badger.Txn) error {
+			err := txn.Set([]byte(renderUUId), renderMetadataBytes)
+			return err
+		})
+		if err != nil {
+			a.logger.Error().Err(err).Msg("")
+			a.errChannel <- 1
+			return
+		}
+		a.runBlender(renderMetadata)
 	}()
 
 	sig := <-a.errChannel
@@ -113,30 +126,30 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) runBlender(renderDir string, blenderMetadata *Form) {
-	blendFilePath := fmt.Sprintf("%s/project.blend", renderDir)
-	output := fmt.Sprintf("%s/render_####", renderDir)
+func (a *API) runBlender(blenderMetadata *RenderMetadata) {
+	blendFilePath := fmt.Sprintf("%s/project.blend", blenderMetadata.RenderDirectory)
+	output := fmt.Sprintf("%s/render_####", blenderMetadata.RenderDirectory)
 	blenderCliArgs := []string{"-b", blendFilePath, "-x", "1", "-o", output}
-	if blenderMetadata.StartFrame != 0 {
-		blenderCliArgs = append(blenderCliArgs, "-s", strconv.Itoa(blenderMetadata.StartFrame))
+	if blenderMetadata.RenderObject.StartFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-s", strconv.Itoa(blenderMetadata.RenderObject.StartFrame))
 	}
 
-	if blenderMetadata.EndFrame != 0 {
-		blenderCliArgs = append(blenderCliArgs, "-e", strconv.Itoa(blenderMetadata.EndFrame))
+	if blenderMetadata.RenderObject.EndFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-e", strconv.Itoa(blenderMetadata.RenderObject.EndFrame))
 	}
 
-	if blenderMetadata.FrameJump > 0 {
-		blenderCliArgs = append(blenderCliArgs, "-j", strconv.Itoa(blenderMetadata.FrameJump))
+	if blenderMetadata.RenderObject.FrameJump > 0 {
+		blenderCliArgs = append(blenderCliArgs, "-j", strconv.Itoa(blenderMetadata.RenderObject.FrameJump))
 	}
 
-	if blenderMetadata.RenderAnimation {
+	if blenderMetadata.RenderObject.RenderAnimation {
 		blenderCliArgs = append(blenderCliArgs, "-a")
 	} else {
-		blenderCliArgs = append(blenderCliArgs, "-f", blenderMetadata.RenderFrames)
+		blenderCliArgs = append(blenderCliArgs, "-f", blenderMetadata.RenderObject.RenderFrames)
 	}
 	cmd := exec.Command("/Applications/blender.app/Contents/MacOS/blender", blenderCliArgs...)
 
-	logFilePath := fmt.Sprintf("%s/logs.txt", renderDir)
+	logFilePath := fmt.Sprintf("%s/logs.txt", blenderMetadata.RenderDirectory)
 	outfile, err := os.Create(logFilePath)
 	if err != nil {
 		a.logger.Info().Msg(fmt.Sprintf("Failed to open log file: %s ", err.Error()))
