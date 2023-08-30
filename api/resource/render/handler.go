@@ -2,8 +2,10 @@ package render
 
 import (
 	e "brender/api/resource/common/err"
+	"brender/api/resource/common/utilities"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"fmt"
 	"io"
@@ -11,7 +13,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/google/uuid"
+	"github.com/dgraph-io/badger/v4"
+	"github.com/lithammer/shortuuid/v4"
 )
 
 // Create godoc
@@ -30,6 +33,7 @@ import (
 func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
+		a.logger.Error().Err(err).Msg("")
 		e.ServerError(w, e.FormErrResponseFailure)
 		return
 	}
@@ -38,14 +42,15 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	for k, v := range r.Form {
 		formData[k] = v[0]
 	}
-	form := &Form{}
+	renderObject := &RenderObject{}
 	formDataJson, err := json.Marshal(formData)
 	if err != nil {
+		a.logger.Error().Err(err).Msg("")
 		e.ServerError(w, e.FormErrResponseFailure)
 		return
 	}
 
-	if err := json.Unmarshal([]byte(formDataJson), form); err != nil {
+	if err := json.Unmarshal([]byte(formDataJson), renderObject); err != nil {
 		a.logger.Error().Err(err).Msg("")
 		e.BadRequest(w, e.JsonDecodingFailure)
 		return
@@ -61,10 +66,19 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Create a new file in the uploads directory
-	fileName := uuid.New()
-	filePath := fmt.Sprintf("./uploads/%s.blend", fileName)
+	renderUUId := shortuuid.New()
+	renderDir := fmt.Sprintf("./uploads/%s", renderUUId)
+	err = utilities.EnsureDir(renderDir)
+	if err != nil {
+		a.logger.Error().Err(err).Msg("")
+		e.ServerError(w, e.FormErrResponseFailure)
+		return
+	}
+
+	filePath := fmt.Sprintf("%s/project.blend", renderDir)
 	f, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
+		a.logger.Error().Err(err).Msg("")
 		e.ServerError(w, e.FormErrResponseFailure)
 		return
 	}
@@ -73,12 +87,33 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	// Copy the contents of the file to the new file
 	_, err = io.Copy(f, file)
 	if err != nil {
+		a.logger.Error().Err(err).Msg("")
 		e.ServerError(w, e.FormErrResponseFailure)
 		return
 	}
 	a.errChannel = make(chan int)
 	go func() {
-		a.runBlender(filePath, form)
+		renderMetadata := new(RenderMetadata)
+		renderMetadata.RenderObject = *renderObject
+		renderMetadata.RenderDirectory = renderDir
+		renderMetadata.StartTime = time.Now().UnixNano()
+		renderMetadataBytes, err := json.Marshal(renderMetadata)
+		if err != nil {
+			a.logger.Error().Err(err).Msg("")
+			a.errChannel <- 1
+			return
+		}
+
+		err = a.db.Update(func(txn *badger.Txn) error {
+			err := txn.Set([]byte(renderUUId), renderMetadataBytes)
+			return err
+		})
+		if err != nil {
+			a.logger.Error().Err(err).Msg("")
+			a.errChannel <- 1
+			return
+		}
+		a.runBlender(renderMetadata)
 	}()
 
 	sig := <-a.errChannel
@@ -91,28 +126,31 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *API) runBlender(filePath string, blenderMetadata *Form) {
-	blenderCliArgs := []string{"-b", filePath, "-x", "1", "-o", "./test.png"}
-	if blenderMetadata.StartFrame != 0 {
-		blenderCliArgs = append(blenderCliArgs, "-s", strconv.Itoa(blenderMetadata.StartFrame))
+func (a *API) runBlender(blenderMetadata *RenderMetadata) {
+	blendFilePath := fmt.Sprintf("%s/project.blend", blenderMetadata.RenderDirectory)
+	output := fmt.Sprintf("%s/render_####", blenderMetadata.RenderDirectory)
+	blenderCliArgs := []string{"-b", blendFilePath, "-x", "1", "-o", output}
+	if blenderMetadata.RenderObject.StartFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-s", strconv.Itoa(blenderMetadata.RenderObject.StartFrame))
 	}
 
-	if blenderMetadata.EndFrame != 0 {
-		blenderCliArgs = append(blenderCliArgs, "-e", strconv.Itoa(blenderMetadata.EndFrame))
+	if blenderMetadata.RenderObject.EndFrame != 0 {
+		blenderCliArgs = append(blenderCliArgs, "-e", strconv.Itoa(blenderMetadata.RenderObject.EndFrame))
 	}
 
-	if blenderMetadata.FrameJump > 0 {
-		blenderCliArgs = append(blenderCliArgs, "-j", strconv.Itoa(blenderMetadata.FrameJump))
+	if blenderMetadata.RenderObject.FrameJump > 0 {
+		blenderCliArgs = append(blenderCliArgs, "-j", strconv.Itoa(blenderMetadata.RenderObject.FrameJump))
 	}
 
-	if blenderMetadata.RenderAnimation {
+	if blenderMetadata.RenderObject.RenderAnimation {
 		blenderCliArgs = append(blenderCliArgs, "-a")
 	} else {
-		blenderCliArgs = append(blenderCliArgs, "-f", blenderMetadata.RenderFrames)
+		blenderCliArgs = append(blenderCliArgs, "-f", blenderMetadata.RenderObject.RenderFrames)
 	}
 	cmd := exec.Command("/Applications/blender.app/Contents/MacOS/blender", blenderCliArgs...)
 
-	outfile, err := os.Create("./log.txt")
+	logFilePath := fmt.Sprintf("%s/logs.txt", blenderMetadata.RenderDirectory)
+	outfile, err := os.Create(logFilePath)
 	if err != nil {
 		a.logger.Info().Msg(fmt.Sprintf("Failed to open log file: %s ", err.Error()))
 		a.errChannel <- 1

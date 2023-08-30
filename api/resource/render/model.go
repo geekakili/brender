@@ -1,6 +1,6 @@
 package render
 
-type Form struct {
+type RenderObject struct {
 	StartFrame      int    `json:"start_frame,string"`
 	EndFrame        int    `json:"end_frame,string"`
 	FrameJump       int    `json:"frame_jump,string"`
@@ -10,12 +10,9 @@ type Form struct {
 	RenderAnimation bool   `json:"render_animation,string"`
 }
 
-type RenderObject struct {
-	StartFrame      int
-	EndFrame        int
-	FrameJump       int
-	RenderFrames    string
-	RenderEngine    string
-	OutputFormat    string
-	RenderAnimation bool
+type RenderMetadata struct {
+	RenderObject    RenderObject
+	RenderDirectory string
+	StartTime       int64
+	StopTime        int64
 }
