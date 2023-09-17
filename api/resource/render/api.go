@@ -12,6 +12,7 @@ type API struct {
 	validator  *validator.Validate
 	errChannel chan int
 	db         *badger.DB
+	isBusy     bool
 }
 
 func New(logger *logger.Logger, validator *validator.Validate, db *badger.DB) *API {

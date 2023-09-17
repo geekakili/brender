@@ -13,11 +13,9 @@ import (
 
 func New(l *logger.Logger, v *validator.Validate, db *badger.DB) *chi.Mux {
 	r := chi.NewRouter()
-
+	renderer := render.New(l, v, db)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.ContentTypeJson)
-
-		renderer := render.New(l, v, db)
 		r.Method("POST", "/render", requestlog.NewHandler(renderer.Render, l))
 	})
 
