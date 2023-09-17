@@ -91,6 +91,12 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 		e.ServerError(w, e.FormErrResponseFailure)
 		return
 	}
+
+	if a.isBusy {
+		// Add a render job to a queue
+		// Send a signal to start the next job in line
+		// Remove finished jobs from the queue
+	}
 	a.errChannel = make(chan int)
 	go func() {
 		renderMetadata := new(RenderMetadata)
@@ -127,6 +133,7 @@ func (a *API) Render(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) runBlender(blenderMetadata *RenderMetadata) {
+	a.isBusy = true
 	blendFilePath := fmt.Sprintf("%s/project.blend", blenderMetadata.RenderDirectory)
 	output := fmt.Sprintf("%s/render_####", blenderMetadata.RenderDirectory)
 	blenderCliArgs := []string{"-b", blendFilePath, "-x", "1", "-o", output}
@@ -152,7 +159,7 @@ func (a *API) runBlender(blenderMetadata *RenderMetadata) {
 	logFilePath := fmt.Sprintf("%s/logs.txt", blenderMetadata.RenderDirectory)
 	outfile, err := os.Create(logFilePath)
 	if err != nil {
-		a.logger.Info().Msg(fmt.Sprintf("Failed to open log file: %s ", err.Error()))
+		a.logger.Error().Msg(fmt.Sprintf("Failed to open log file: %s ", err.Error()))
 		a.errChannel <- 1
 		return
 	}
@@ -162,7 +169,7 @@ func (a *API) runBlender(blenderMetadata *RenderMetadata) {
 
 	err = cmd.Start()
 	if err != nil {
-		a.logger.Info().Msg("Blender instance has failed to start")
+		a.logger.Error().Msg("Blender instance has failed to start")
 		a.errChannel <- 1
 		return
 	}
@@ -170,5 +177,17 @@ func (a *API) runBlender(blenderMetadata *RenderMetadata) {
 	a.logger.Info().Msg("Render process started")
 	a.errChannel <- 0
 	a.logger.Info().Msg("Render process running")
-	cmd.Wait()
+	err = cmd.Wait()
+	if err != nil {
+		a.logger.Error().Msg("Blender encountered an error while rendering")
+		a.logger.Info().Msg(err.Error())
+		a.isBusy = false
+		return
+	}
+	a.logger.Info().Msg("Render process has completed")
+	a.isBusy = false
+}
+
+func prepareRender(renderObject RenderObject) RenderMetadata {
+
 }
